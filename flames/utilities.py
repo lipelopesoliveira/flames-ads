@@ -1,6 +1,7 @@
 import os
 import warnings
 
+import ase
 import gemmi
 import numpy as np
 from ase import Atoms, units
@@ -278,7 +279,7 @@ def random_n_splits(data: np.ndarray, n: int, random_generator=None) -> np.ndarr
     return np.array(result_arrays)
 
 
-def read_cif(path, file_name):
+def read_cif(file_name):
     """
     Reads a file in format `.cif` from the `path` given and returns
     a list containg the N atom labels and a Nx3 array contaning
@@ -286,8 +287,6 @@ def read_cif(path, file_name):
 
     Parameters
     ----------
-    path : str
-        Path to the file.
     file_name : str
         Name of the `cif` file. Does not neet to contain the `.cif` extention.
 
@@ -303,10 +302,8 @@ def read_cif(path, file_name):
         List of strings containing containg the N atom partial charges.
     """
 
-    cif_filename = os.path.join(path, file_name)
-
     # Read data from CIF file
-    cif = gemmi.cif.read_file(cif_filename).sole_block()
+    cif = gemmi.cif.read_file(file_name).sole_block()
     a = float(cif.find_value("_cell_length_a").split("(")[0])
     b = float(cif.find_value("_cell_length_b").split("(")[0])
     c = float(cif.find_value("_cell_length_c").split("(")[0])
@@ -329,4 +326,12 @@ def read_cif(path, file_name):
     except Exception:
         partial_charges = np.zeros(len(atom_site_type_symbol))
 
-    return cellpar, atom_site_type_symbol, atom_site_frac, partial_charges
+    struc = ase.Atoms(
+        symbols=atom_site_type_symbol,
+        scaled_positions=atom_site_frac,
+        cell=cellpar,
+        pbc=True)
+
+    struc.set_initial_charges(partial_charges)
+
+    return struc
