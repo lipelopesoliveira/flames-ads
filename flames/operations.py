@@ -5,6 +5,51 @@ from scipy.spatial.transform import Rotation
 from flames.ase_utils import unwrap_positions
 
 
+def randon_unit_vector_sphere_marsaglia(rnd_generator: np.random.Generator) -> np.ndarray:
+    """
+    Generates a random uniform vector in the surface of a sphere with radius 1.
+
+    This function implements the method proposed by George Marsaglia in
+    The Annals of Mathematical Statistics, 1972, Vol. 43, No. 2, 645-646
+
+    This is the fastest implementation compared with other approaches, 
+    such as Gaussian distributions or trigonometric functions.
+    This is also faster than simple genaration a vector on a cube.
+    
+    Timing the generation of 1 vector, repeated 1,000,000 times.
+
+    Marsaglia: 4.4012 microseconds
+    Gaussian:  6.0038 microseconds
+    Trig:      10.8591 microseconds
+    Cube:      7.9170 microseconds
+
+    Parameters
+    ----------
+    rnd_generator : np.random.Generator
+        Random number generator for reproducibility.
+    
+    Returns
+    -------
+    np.ndarray
+        Random vector in cartesian coordinates
+    """
+
+    random = rnd_generator.random  # local alias for speed
+    while True:
+        z1 = 2.0 * random() - 1.0
+        z2 = 2.0 * random() - 1.0
+        S = z1 * z1 + z2 * z2
+        if S < 1.0:
+            break
+
+    scale = np.sqrt(1.0 - S)
+    return np.fromiter(
+        (2.0 * z1 * scale, 2.0 * z2 * scale, 1.0 - 2.0 * S),
+        dtype=np.float64,
+        count=3
+    )
+
+
 def random_rotation(
     original_position: np.ndarray, cell: np.ndarray, rnd_generator: np.random.Generator
 ) -> np.ndarray:
@@ -86,14 +131,15 @@ def random_rotation_limited(
     centered_points = np.array(unrwap_pos) - center
 
     # --- Generate random axis uniformly on the unit sphere ---
-    axis = rnd_generator.normal(size=3)
-    axis /= np.linalg.norm(axis)
+    axis = randon_unit_vector_sphere_marsaglia(rnd_generator)
 
     # --- Generate random angle in [-theta_max, theta_max] ---
     angle = rnd_generator.uniform(-theta_max, theta_max)
 
-    # --- Create rotation object from axis-angle representation ---
-    rot = Rotation.from_rotvec(axis * angle)
+    # --- Create rotation object from quaternion representation ---
+    q = np.array([np.cos(angle/2), *np.sin(angle/2) * axis])
+
+    rot = Rotation.from_quat(q, scalar_first=True)
 
     # Apply rotation
     rotated_points = rot.apply(centered_points) + center
@@ -147,7 +193,7 @@ def random_position_cell(
 ) -> np.ndarray:
     """
     Generates a random translation vector within the parallelepiped
-    defined by the lattice vectors, using a specific seed for reproducibility.
+    defined by the lattice vectors, using a random generator for reproducibility.
 
     Parameters:
     ----------

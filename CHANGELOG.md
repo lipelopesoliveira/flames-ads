@@ -27,6 +27,7 @@
 - Only create the `Trajectory_rejected.traj` file if the `save_rejected` parameter is set to `True` when initializing the `BaseSimulator` class.
 - Abstracted a few methods on the `Widom` class for better code reusability.
 - Refactor the results json to improve the clarity
+- Now the molecular rotation are based on a unit vector on a sphere, using the method proposed by George Marsaglia in The Annals of Mathematical Statistics, 1972, Vol. 43, No. 2, 645-646.
 
 ### Documentation 📖
 
