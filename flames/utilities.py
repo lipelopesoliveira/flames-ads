@@ -1,5 +1,7 @@
 import warnings
 
+import os
+import gemmi
 import numpy as np
 from ase import Atoms, units
 from ase.cell import Cell
@@ -274,3 +276,57 @@ def random_n_splits(data: np.ndarray, n: int, random_generator=None) -> np.ndarr
         result_arrays.append(data[mask])
 
     return np.array(result_arrays)
+
+
+def read_cif(path, file_name):
+    """
+    Reads a file in format `.cif` from the `path` given and returns
+    a list containg the N atom labels and a Nx3 array contaning
+    the atoms coordinates.
+
+    Parameters
+    ----------
+    path : str
+        Path to the file.
+    file_name : str
+        Name of the `cif` file. Does not neet to contain the `.cif` extention.
+
+    Returns
+    -------
+    cell : numpy array
+        3x3 array contaning the cell vectors.
+    atom_labels : list
+        List of strings containing containg the N atom labels.
+    atom_pos : numpy array
+        Nx3 array contaning the atoms coordinates
+    charges : list
+        List of strings containing containg the N atom partial charges.
+    """
+
+    cif_filename = os.path.join(path, file_name)
+
+    # Read data from CIF file
+    cif = gemmi.cif.read_file(cif_filename).sole_block()
+    a = float(cif.find_value('_cell_length_a').split('(')[0])
+    b = float(cif.find_value('_cell_length_b').split('(')[0])
+    c = float(cif.find_value('_cell_length_c').split('(')[0])
+    beta = float(cif.find_value('_cell_angle_beta').split('(')[0])
+    gamma = float(cif.find_value('_cell_angle_gamma').split('(')[0])
+    alpha = float(cif.find_value('_cell_angle_alpha').split('(')[0])
+
+    cellpar = np.array([a, b, c, alpha, beta, gamma])
+
+    atom_site_type_symbol = list(cif.find_values('_atom_site_type_symbol'))
+
+    atom_site_fract_x = np.array(cif.find_values('_atom_site_fract_x')).astype(float)
+    atom_site_fract_y = np.array(cif.find_values('_atom_site_fract_y')).astype(float)
+    atom_site_fract_z = np.array(cif.find_values('_atom_site_fract_z')).astype(float)
+
+    atom_site_frac = np.array([atom_site_fract_x, atom_site_fract_y, atom_site_fract_z]).T
+
+    try:
+        partial_charges = np.array(cif.find_values('_atom_site_charge')).astype(float)
+    except Exception:
+        partial_charges = np.zeros(len(atom_site_type_symbol))
+
+    return cellpar, atom_site_type_symbol, atom_site_frac, partial_charges
