@@ -366,19 +366,17 @@ class EwaldSum(Calculator):
         Nmax = int(np.ceil(self.G_cutoff_N))
         G_cutoff_N_sq = self.G_cutoff_N**2
 
-        # --- This part is fine in numpy ---
-        # Create grid of n-vectors [nx, ny, nz]
+        # Create grid of n-vectors [nx, ny, nz] for the sum
         n_range = np.arange(-Nmax, Nmax + 1, dtype=int)
         nx_grid, ny_grid, nz_grid = np.meshgrid(n_range, n_range, n_range, indexing="ij")
         n_vectors_flat = np.stack([nx_grid.ravel(), ny_grid.ravel(), nz_grid.ravel()], axis=-1)
 
-        # --- Filter n-vectors ---
+        # --- Filter n-vectors to remove k=0
         n_is_not_zero = np.any(n_vectors_flat, axis=1)
         n_vectors_nonzero = n_vectors_flat[n_is_not_zero]
 
         n_norm_sq = np.sum(n_vectors_nonzero**2, axis=1)
         n_vectors_valid = n_vectors_nonzero[n_norm_sq <= G_cutoff_N_sq]
-        # --- End of numpy setup ---
 
         if n_vectors_valid.shape[0] == 0:
             return np.zeros(n_atoms)  # No k-vectors in cutoff
@@ -398,8 +396,9 @@ class EwaldSum(Calculator):
         )
 
         # Apply prefactor
-        rec_energy_constant = 2 * np.pi / volume
-        return rec_energy_constant * recip_energies_raw
+        rec_energy = (2 * np.pi / volume) * recip_energies_raw
+
+        return rec_energy
 
     def _reciprocalEnergyOld(self, structure: ase.Atoms) -> np.ndarray:
         """
@@ -473,9 +472,9 @@ class EwaldSum(Calculator):
         recip_energies_raw = charges * sum_over_k
 
         # Apply prefactor
-        rec_energy_constant = 2 * np.pi / volume
+        rec_energy = (2 * np.pi / volume) * recip_energies_raw
 
-        return rec_energy_constant * recip_energies_raw
+        return rec_energy
 
     def _selfEnergy(self, charges: np.ndarray) -> np.ndarray:
         """
