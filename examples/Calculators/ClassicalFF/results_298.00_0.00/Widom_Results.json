@@ -1,0 +1,11 @@
+{
+    "code_version": "0.4.4",
+    "random_seed": 42,
+    "enlapsed_time_hours": 3.833586242222222,
+    "total_insertions": 30001,
+    "temperature_K": 298.0,
+    "henry_coefficient_mol_kg-1_Pa-1": 0.001701641278585589,
+    "henry_coefficient_std_mol_kg-1_Pa-1": 0.0001263130556036855,
+    "enthalpy_of_adsorption_kJ_mol-1": -34.012502919379564,
+    "enthalpy_of_adsorption_std_kJ_mol-1": 0.4945944610234945
+}
