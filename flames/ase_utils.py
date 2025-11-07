@@ -922,7 +922,7 @@ def rdf_gcmc(
             total_area += area
 
         # --- 2b. Get atom indices for THIS frame ---
-        current_idx = [[], []]
+        current_idx: list = [[], []]
         for i, idx_spec in enumerate([atom_1, atom_2]):
             # Ensure idx_spec is a list (e.g., 'O' -> ['O'])
             idx_list = idx_spec if isinstance(idx_spec, list) else [idx_spec]
