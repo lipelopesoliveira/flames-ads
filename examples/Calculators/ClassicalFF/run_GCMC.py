@@ -1,4 +1,3 @@
-import os
 import sys
 
 sys.path.append("/home/felipe/PRs/mlp_adsorption")

@@ -16,6 +16,10 @@
 
 ### New Features 🎉
 
+- GCMC RDF: The `ase_utils` now has the `rdf_gcmc`, that can calculate the Radial Distribution Function (RDF) on a trajectory with different number of atoms.
+- Added the `EwaldSum` calculator to calculate the electrostatic interactions
+- Added the `CustomLennardJones` calculator to calculate the Lennard-Jones interaction energy
+
 ### Fixed 🐛
 
 - Fix the bug where the `output_folder` parameter was not being properly passed to the `BaseSimulator` on `GCMC` class.
