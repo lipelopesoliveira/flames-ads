@@ -1,3 +1,5 @@
+import json
+
 import ase
 from ase.calculators import mixing
 from ase.data import vdw_radii
@@ -13,7 +15,7 @@ set_num_threads(NUM_THREADS_TO_USE)
 
 print(get_num_threads())
 
-import json
+
 
 with open("/home/felipe/PRs/mlp_adsorption/flames/data/lj_params.json", "r") as f:
     lj_params = json.loads(f.read())
