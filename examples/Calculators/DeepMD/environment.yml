@@ -1,4 +1,4 @@
-name: flames
+name: flames_deepmd
 channels:
   - conda-forge
 dependencies:
@@ -16,7 +16,7 @@ dependencies:
   - simplejson
   - gemmi
   - pip:
+    - deepmd-kit[torch]
     - pymser
     - cuequivariance-torch
-    - mace-torch
     - torch-dftd

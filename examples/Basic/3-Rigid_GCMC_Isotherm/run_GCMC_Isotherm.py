@@ -79,7 +79,7 @@ for i, pressure in enumerate(pressure_list):
     if pressure > pressure_list[0]:
         print("Loading previous state for continuation...")
         output_dir = f"results_{Temperature:.2f}_{pressure_list[i-1]:.2f}"
-        gcmc.load_state(os.path.join(output_dir, "GCMC_Trajectory.traj"))
+        gcmc.load_state(os.path.join(output_dir, "Movies", "Trajectory.traj"))
 
     gcmc.run(MCSteps)
     gcmc.logger.print_summary()

@@ -12,6 +12,35 @@
 
 ### Removed 🗑️
 
+## v[0.4.4] - 2025-11-04
+
+### New Features 🎉
+
+- GCMC RDF: The `ase_utils` now has the `rdf_gcmc`, that can calculate the Radial Distribution Function (RDF) on a trajectory with different number of atoms.
+- Added the `EwaldSum` calculator to calculate the electrostatic interactions
+- Added the `CustomLennardJones` calculator to calculate the Lennard-Jones interaction energy
+
+### Fixed 🐛
+
+- Fix the bug where the `output_folder` parameter was not being properly passed to the `BaseSimulator` on `GCMC` class.
+- Fix a major bug in rotating molecules that have part of their atoms in one unit cell and parts in another.
+
+### Enhanced ✨
+
+- Introduced the `max_overlap_tries` parameter in `GCMC` and `Widom` classes to try `n` attempts for placing an adsorbate without van der Waals overlap. If a valid position is not found within the specified number of tries, the insertion is rejected. This applies to insertion, rotation and translation moves.
+- Only create the `Trajectory_rejected.traj` file if the `save_rejected` parameter is set to `True` when initializing the `BaseSimulator` class.
+- Abstracted a few methods on the `Widom` class for better code reusability.
+- Refactor the results json to improve the clarity
+- Both `Widom` and `GCMC` classes now saves the random seed and enlapsed time on the `results.json` file.
+- Now the use of Left-most Local Minima for pyMSER equilibration can defined on the GCMC class through the `LLM` parameter. By default it is `True`.
+- Now the molecular rotation are based on a unit vector on a sphere, using the method proposed by George Marsaglia in The Annals of Mathematical Statistics, 1972, Vol. 43, No. 2, 645-646.
+
+### Documentation 📖
+
+- Fix a bug on the isotherm simulation example.
+
+### Removed 🗑️
+
 ## v[0.4.3] - 2025-10-15
 
 ### New Features 🎉

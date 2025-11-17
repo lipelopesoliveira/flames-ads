@@ -9,6 +9,7 @@ from ase import Atoms, units
 from ase.calculators.calculator import Calculator
 from ase.constraints import FixSymmetry
 from ase.filters import FrechetCellFilter
+from ase.geometry import get_distances
 from ase.io.trajectory import Trajectory
 from ase.md import MDLogger
 from ase.md.npt import NPT
@@ -17,6 +18,7 @@ from ase.md.nvtberendsen import NVTBerendsen
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution, Stationary
 from ase.optimize.optimize import Optimizer
 from ase.spacegroup.symmetrize import check_symmetry
+from tqdm import tqdm
 
 
 def crystalOptimization(
@@ -730,3 +732,303 @@ def nPT_NoseHoover(
     print(footer, file=out_file, flush=True)
 
     return atoms
+
+
+def pbc2pbc(pbc):
+    """Helper function for dealing with pbc."""
+    if pbc is None:
+        pbc = False
+    if not hasattr(pbc, "__len__"):
+        pbc = (pbc,) * 3
+    return np.asarray(pbc)
+
+
+def complete_cell(cell):
+    """Return 3x3 cell array from cell object."""
+    if cell is None:
+        cell = np.ones((3, 3))
+    cell = np.asarray(cell)
+    if cell.shape == (3,):
+        cell = np.diag(cell)
+    return cell
+
+
+def unwrap_positions(positions, cell, pbc=True, ref_atom=0):
+    """Unwrap positions relative to a reference atom.
+
+    This function translates atoms by integer multiples of the
+    lattice vectors so that they form a connected set,
+    minimizing the distance to a reference atom. This is the
+    reverse of wrap_positions.
+
+    Parameters:
+
+    positions: float ndarray of shape (n, 3)
+        Positions of the atoms.
+    cell: float ndarray of shape (3, 3)
+        Unit cell vectors.
+    pbc: one or 3 bool
+        For each axis in the unit cell, decides whether
+        unwrapping is applied.
+    ref_atom: int
+        The index of the atom to use as the reference point (default 0).
+        All other atoms will be unwrapped to be as close as
+        possible to this atom.
+    """
+
+    # Ensure pbc is a (3,) boolean array
+    pbc = pbc2pbc(pbc)
+
+    # Ensure cell is a (3, 3) array
+    cell = complete_cell(cell)
+
+    # Convert positions to fractional coordinates
+    # We solve cell.T * f.T = p.T  =>  f = (solve(cell.T, p.T)).T
+    fractional_positions = np.linalg.solve(cell.T, np.asarray(positions).T).T
+
+    # Get the reference atom's fractional position
+    ref_f_pos = fractional_positions[ref_atom]
+
+    # Calculate fractional differences relative to the reference atom
+    # deltas.shape = (n, 3)
+    deltas = fractional_positions - ref_f_pos
+
+    # Apply unwrapping logic
+    # For periodic directions, find the closest image by
+    # subtracting the nearest integer.
+    # np.rint(x) rounds x to the nearest integer.
+    for i in range(3):
+        if pbc[i]:
+            deltas[:, i] -= np.rint(deltas[:, i])
+
+    # The new unwrapped fractional positions are the reference
+    # position plus the "closest image" deltas
+    unwrapped_fractional = ref_f_pos + deltas
+
+    # Convert back to Cartesian coordinates
+    return np.dot(unwrapped_fractional, cell)
+
+
+def rdf_gcmc(
+    images: list[ase.Atoms],
+    atom_1: str,
+    atom_2: str,
+    rmax: float = 10.0,
+    binwidth: float = 0.1,
+    exclude_idx: list = [],
+    surface: bool = False,
+    show_progress: bool = True,
+) -> np.ndarray:
+    """
+    Calculate radial distribution function for GCMC trajectories.
+
+    This version is modified to handle trajectories where the
+    number of atoms changes per frame (e.g., GCMC).
+
+    Parameters
+    ----------
+    images : list of Atoms or Trajectory
+        ASE Atoms object(s).
+
+    atom_1, atom_2 : str
+        Atoms to use for the RDF calculation. MUST be element symbols
+        (e.g., 'O') for GCMC. Integer indices are NOT supported as
+        they are not persistent in GCMC.
+
+    rmax : float
+        Maximum radius (in Angstrom) for the RDF calculation.
+        This is required for consistent binning.
+
+    binwidth : float
+        The distance increments (in Angstrom).
+
+    exclude_idx : list of int
+        Atomic indices to be ignored. Note: This assumes these
+        indices are 'static' (e.g., a fixed slab) and exist
+        in all frames. Use with caution in GCMC.
+
+    surface : bool
+        If True, returns the g(z) instead of the g(r).
+        Normalization is 1D (per area) instead of 3D (per volume).
+
+    show_progress: bool
+        Show progress bar using tqdm library
+
+    Returns
+    -------
+    g_r: ndarray
+        2D (r, g_r) numpy array.
+
+    Raises
+    ------
+    ValueError
+    """
+
+    # --- 1. Setup ---
+    if isinstance(images, Atoms):
+        images = [images]
+
+    nimages = len(images)
+    if nimages == 0:
+        raise ValueError("No images provided.")
+
+    # Ensure exclude_idx is a list of int
+    if not all([isinstance(ei, int) for ei in exclude_idx]):
+        raise ValueError("Parameter exclude_idx must be a list of int.")
+
+    # Check for integer indices in selectors (not allowed for GCMC)
+    for idx_spec in [atom_1, atom_2]:
+        idx_list = idx_spec if isinstance(idx_spec, list) else [idx_spec]
+        if any(isinstance(id_val, int) for id_val in idx_list):
+            raise ValueError(
+                "idx1/idx2 cannot contain integers for GCMC trajectories. "
+                "Please use element symbols (e.g., 'O')."
+            )
+
+    # Setup bins based on rmax and binwidth
+    dr = binwidth
+    nbins = int(rmax / dr)
+    if nbins == 0:
+        ValueError(f"Error: rmax ({rmax}) or binwidth ({binwidth}) results in 0 bins.")
+
+    bin_edges = np.linspace(0, rmax, nbins + 1)
+    r_centers = (bin_edges[:-1] + bin_edges[1:]) / 2.0
+    bins = np.zeros(nbins, dtype=float)
+
+    # Accumulators for average normalization
+    total_volume = 0.0
+    total_pairs = 0.0
+    total_area = 0.0  # For g(z)
+
+    # Check if this is a self-comparison (e.g., 'O' vs 'O')
+    is_self_comparison = atom_1 == atom_2
+
+    # --- 2. Loop over all images ---
+    for atoms in tqdm(images, disable=not show_progress):
+        if len(atoms) == 0:
+            continue  # Skip empty frames
+
+        # --- 2a. Get frame-specific properties ---
+        vol = atoms.get_volume()
+        cell = atoms.cell.array
+        pos = atoms.get_positions()
+        symbols = atoms.get_chemical_symbols()
+        allElements = set(symbols)
+
+        total_volume += vol
+        if surface:
+            # Area is volume projected onto XY plane (assuming Z is the surface normal)
+            area = np.linalg.norm(np.cross(cell[0], cell[1]))
+            total_area += area
+
+        # --- 2b. Get atom indices for THIS frame ---
+        current_idx: list = [[], []]
+        for i, idx_spec in enumerate([atom_1, atom_2]):
+            # Ensure idx_spec is a list (e.g., 'O' -> ['O'])
+            idx_list = idx_spec if isinstance(idx_spec, list) else [idx_spec]
+
+            frame_indices = []
+            for element_symbol in idx_list:
+                if isinstance(element_symbol, str):
+                    if element_symbol in allElements:
+                        # Find all atoms with this symbol
+                        indices = [atom.index for atom in atoms if atom.symbol == element_symbol]
+                        frame_indices.extend(indices)
+                # We already checked for ints, so no need for else
+
+            # Apply exclusions and remove duplicates from this frame's list
+            frame_indices = [idx for idx in frame_indices if idx not in exclude_idx]
+            current_idx[i] = list(set(frame_indices))
+
+        current_idx1_list, current_idx2_list = current_idx
+
+        # Skip frame if one of the lists is empty
+        if not current_idx1_list or not current_idx2_list:
+            continue
+
+        # --- 2c. Get distances ---
+        pos1 = pos[current_idx1_list]
+        pos2 = pos[current_idx2_list]
+
+        if surface:
+            # Project positions to Z-axis for g(z)
+            pos1 = pos1 * [0, 0, 1]
+            pos2 = pos2 * [0, 0, 1]
+
+        _, dist = get_distances(pos1, pos2, cell=cell, pbc=atoms.pbc)
+
+        # --- 2d. Apply mask for self-interaction ---
+        dist_masked = None
+        if is_self_comparison:
+            # Check if the generated index lists are identical
+            if current_idx1_list == current_idx2_list:
+                if dist.shape[0] == dist.shape[1]:
+                    # Remove diagonal (self-pairs)
+                    mask = ~np.eye(dist.shape[0], dtype=bool)
+                    dist_masked = dist[mask]
+                else:
+                    dist_masked = dist.flatten()  # Should not happen, but safe
+            else:
+                # e.g., idx1=['O'], idx2=['O','H'] -> not a true self-comparison
+                dist_masked = dist.flatten()
+        else:
+            # Different atom types (e.g., 'O' vs 'H'), no self-pairs
+            dist_masked = dist.flatten()
+
+        # --- 2e. Bin histogram ---
+        hist, _ = np.histogram(dist_masked, bins=bin_edges)
+        bins += hist
+        total_pairs += len(dist_masked)
+
+    # --- 3. Normalization ---
+    if nimages == 0 or total_pairs == 0:
+        print("Warning: No pairs found or no images processed. Returning g(r) = 0.")
+        return np.array(list(zip(r_centers, np.zeros(nbins)))).T
+
+    avg_vol = total_volume / nimages
+    avg_pairs_per_frame = total_pairs / nimages
+
+    # Calculate average pair density
+    if avg_vol == 0:
+        print("Warning: Average volume is zero. Cannot normalize.")
+        return np.array(list(zip(r_centers, np.zeros(nbins)))).T
+    pair_density = avg_pairs_per_frame / avg_vol
+
+    if pair_density == 0:
+        print("Warning: Zero pair density. Returning g(r) = 0.")
+        return np.array(list(zip(r_centers, np.zeros(nbins)))).T
+
+    # Get average counts per bin
+    avg_counts_per_bin = bins / nimages
+
+    if surface:
+        # g(z) normalization
+        avg_area = total_area / nimages
+        if avg_area == 0:
+            print("Warning: Average cell area is zero. Cannot calculate g(z).")
+            return np.array(list(zip(r_centers, np.zeros(nbins)))).T
+
+        # Ideal count in a 1D slab of thickness 'dr'
+        # N_ideal = (Avg Pairs / Avg Vol) * Avg Area * dr
+        ideal_counts = (avg_pairs_per_frame / avg_vol) * avg_area * dr
+        if ideal_counts == 0:  # Handle constant
+            print("Warning: Ideal count for g(z) is zero. Cannot normalize.")
+            return np.array(list(zip(r_centers, np.zeros(nbins)))).T
+        g = avg_counts_per_bin / ideal_counts  # Normalize all bins by the same 1D density
+
+    else:
+        # g(r) normalization: Volume of spherical shells: 4 * pi * r^2 * dr
+        vol_shells = 4.0 * np.pi * r_centers**2 * dr
+
+        # Ideal number of pairs in each shell
+        ideal_counts = pair_density * vol_shells
+
+        g = np.zeros_like(avg_counts_per_bin)
+
+        # Avoid division by zero at r=0
+        non_zero = ideal_counts > 1e-9
+        g[non_zero] = avg_counts_per_bin[non_zero] / ideal_counts[non_zero]
+
+    g_r = np.array(list(zip(r_centers, g))).T
+
+    return g_r

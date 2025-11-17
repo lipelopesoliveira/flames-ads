@@ -27,6 +27,7 @@ dependencies = [
   "ase",
   "pymatgen",
   "tqdm",
+  "gemmi",
   "simplejson",
   "mace-torch",
   "torch-dftd"

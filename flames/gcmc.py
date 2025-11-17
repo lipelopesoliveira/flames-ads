@@ -11,6 +11,7 @@ from ase.calculators import calculator
 from ase.io import Trajectory, read
 from tqdm import tqdm
 
+from flames import VERSION
 from flames.base_simulator import BaseSimulator
 from flames.eos import PengRobinsonEOS
 from flames.logger import GCMCLogger
@@ -34,6 +35,7 @@ class GCMC(BaseSimulator):
         device: str,
         vdw_radii: np.ndarray,
         vdw_factor: float = 0.6,
+        max_overlap_tries: int = 100,
         max_translation: float = 1.0,
         max_rotation: float = np.radians(15),
         max_deltaE: float = 1.555,
@@ -49,6 +51,7 @@ class GCMC(BaseSimulator):
         criticalTemperature: Union[float, None] = None,
         criticalPressure: Union[float, None] = None,
         acentricFactor: Union[float, None] = None,
+        LLM: bool = True,
         move_weights: dict = {
             "insertion": 0.25,
             "deletion": 0.25,
@@ -88,6 +91,8 @@ class GCMC(BaseSimulator):
             This is used to avoid overflow due to problematic calculations (default is 1.555 eV / 150 kJ/mol).
         vdw_factor : float, optional
             Factor to scale the Van der Waals radii (default is 0.6).
+        max_overlap_tries : int, optional
+            Maximum number of tries to insert/move a molecule without overlap (default is 100).
         max_translation : float, optional
             Maximum translation distance (default is 1.0).
         max_rotation : float, optional
@@ -118,6 +123,9 @@ class GCMC(BaseSimulator):
             Critical pressure of the adsorbate in Pascal.
         acentricFactor : float, optional
             Acentric factor of the adsorbate.
+        LLM : bool, optional
+            Use Leftmost Local Minima on the determination of the equilibration point. This can underestimate the
+            equilibration point in some situations, but generate good averages for well-behaved scenarios.
         move_weights : dict, optional
             A dictionary containing the move weights for 'insertion', 'deletion', 'translation', and 'rotation'.
             Default is equal weights for all moves.
@@ -136,6 +144,7 @@ class GCMC(BaseSimulator):
             save_frequency=save_frequency,
             save_rejected=save_rejected,
             output_to_file=output_to_file,
+            output_folder=output_folder,
             debug=debug,
             fugacity_coeff=fugacity_coeff,
             random_seed=random_seed,
@@ -177,11 +186,36 @@ class GCMC(BaseSimulator):
 
         self.mov_dict: dict = {"insertion": [], "deletion": [], "translation": [], "rotation": []}
 
+        self.movements: dict = {
+            "insertion": self.try_insertion,
+            "deletion": self.try_deletion,
+            "rotation": self.try_rotation,
+            "translation": self.try_translation,
+        }
+
         # Base iteration for restarting the simulation. This is for tracking the iteration count only
         self.base_iteration: int = 0
 
+        # Maximum number of tries to insert a molecule without overlap
+        self.max_overlap_tries = max_overlap_tries
+
         # Dictionary to store the equilibrated results by pyMSER
         self.equilibrated_results: dict = {}
+
+        # Uses Leftmost Local Minima
+        self.LLM = LLM
+
+    def _save_rejected_if_enabled(self, atoms_trial: ase.Atoms) -> None:
+        """
+        Helper to conditionally write the rejected configuration to the trajectory.
+
+        Parameters
+        ----------
+        atoms_trial : ase.Atoms
+            The trial configuration that was rejected.
+        """
+        if self.save_rejected:
+            self.rejected_trajectory.write(atoms_trial)  # type: ignore
 
     def restart(self) -> None:
         """
@@ -266,7 +300,6 @@ class GCMC(BaseSimulator):
 
     def equilibrate(
         self,
-        LLM: bool = True,
         batch_size: Union[int, bool] = False,
         run_ADF: bool = False,
         uncertainty: str = "uSD",
@@ -298,7 +331,7 @@ class GCMC(BaseSimulator):
 
         eq_results = pymser.equilibrate(
             self.uptake_list,
-            LLM=LLM,
+            LLM=self.LLM,
             batch_size=int(len(self.uptake_list) / 50) if batch_size is False else batch_size,
             ADF_test=run_ADF,
             uncertainty=uncertainty,
@@ -329,7 +362,6 @@ class GCMC(BaseSimulator):
     def save_results(
         self,
         file_name: str = "GCMC_Results.json",
-        LLM: bool = True,
         batch_size: Union[int, bool] = False,
         run_ADF: bool = False,
         uncertainty: str = "uSD",
@@ -362,45 +394,48 @@ class GCMC(BaseSimulator):
 
         """
 
-        self.equilibrate(LLM=LLM, batch_size=batch_size, run_ADF=run_ADF, uncertainty=uncertainty)
+        self.equilibrate(batch_size=batch_size, run_ADF=run_ADF, uncertainty=uncertainty)
 
         results = {
-            "temperature_K": self.T,
-            "pressure_Pa": self.P,
-            "fugacity_coefficient": self.fugacity_coeff,
-            "fugacity_Pa": self.fugacity_coeff * self.P,
-            "n_steps": len(self.uptake_list),
-            "t0": self.equilibrated_results.get("t0", None),
-            "average": self.equilibrated_results.get("average", None),
-            "uncertainty": self.equilibrated_results.get("uncertainty", None),
-            "equilibrated": self.equilibrated_results.get("equilibrated", None),
-            "ac_time": self.equilibrated_results.get("ac_time", None),
-            "uncorr_samples": self.equilibrated_results.get("uncorr_samples", None),
-            "enthalpy_kJ_per_mol": self.equilibrated_results.get("enthalpy_kJ_per_mol", None),
-            "enthalpy_sd_kJ_per_mol": self.equilibrated_results.get("enthalpy_sd_kJ_per_mol", None),
-            "uptake_nmol": self.equilibrated_results.get("average", 0),
-            "uptake_sd_nmol": self.equilibrated_results.get("uncertainty", 0),
-            "uptake_mmol_g": self.equilibrated_results.get("average", 0)
-            * self.conv_factors["mol/kg"],
-            "uptake_sd_mmol_g": self.equilibrated_results.get("uncertainty", 0)
-            * self.conv_factors["mol/kg"],
-            "uptake_mg_g": self.equilibrated_results.get("average", 0) * self.conv_factors["mg/g"],
-            "uptake_sd_mg_g": self.equilibrated_results.get("uncertainty", 0)
-            * self.conv_factors["mg/g"],
-            "uptake_cm3__g": self.equilibrated_results.get("average", 0)
-            * self.conv_factors["cm^3 STP/gr"],
-            "uptake_sd_cm3_g": self.equilibrated_results.get("uncertainty", 0)
-            * self.conv_factors["cm^3 STP/gr"],
-            "uptake_cm3_cm3": self.equilibrated_results.get("average", 0)
-            * self.conv_factors["cm^3 STP/cm^3"],
-            "uptake_sd_cm3_cm3": self.equilibrated_results.get("uncertainty", 0)
-            * self.conv_factors["cm^3 STP/cm^3"],
-            "uptake_percent_wt": self.equilibrated_results.get("average", 0)
-            * self.conv_factors["mg/g"]
-            * 1e-1,
-            "uptake_sd_percent_wt": self.equilibrated_results.get("uncertainty", 0)
-            * self.conv_factors["mg/g"]
-            * 1e-1,
+            "simulation": {
+                "code_version": VERSION,
+                "random_seed": self.random_seed,
+                "temperature_K": self.T,
+                "pressure_Pa": self.P,
+                "fugacity_coefficient": self.fugacity_coeff,
+                "fugacity_Pa": self.fugacity_coeff * self.P,
+                "move_weights": self.move_weights,
+                "n_steps": len(self.uptake_list),
+                "enlapsed_time_hours": (datetime.datetime.now() - self.start_time).total_seconds()
+                / 3600,
+            },
+            "equilibration": {
+                "LLM": self.LLM,
+                "t0": self.equilibrated_results.get("t0", None),
+                "average": self.equilibrated_results.get("average", None),
+                "uncertainty": self.equilibrated_results.get("uncertainty", None),
+                "equilibrated": self.equilibrated_results.get("equilibrated", None),
+                "ac_time": self.equilibrated_results.get("ac_time", None),
+                "uncorr_samples": self.equilibrated_results.get("uncorr_samples", None),
+            },
+            "enthalpy": {
+                "kJ_mol": {
+                    "mean": self.equilibrated_results.get("enthalpy_kJ_per_mol", None),
+                    "sd": self.equilibrated_results.get("enthalpy_sd_kJ_per_mol", None),
+                }
+            },
+        }
+
+        # --- Uptake data (computed from conversion factors) ---
+        avrg = self.equilibrated_results.get("average", 0)
+        stdv = self.equilibrated_results.get("uncertainty", 0)
+
+        results["uptake"] = {
+            unit: {
+                "mean": avrg * factor,
+                "sd": stdv * factor,
+            }
+            for unit, factor in self.conv_factors.items()
         }
 
         with open(os.path.join(self.out_folder, file_name), "w") as f:
@@ -480,12 +515,34 @@ class GCMC(BaseSimulator):
         # Apply Metropolis acceptance/rejection rule
         return rnd_number < acc
 
+    def _save_state(self, actual_iteration: int) -> None:
+
+        if actual_iteration % self.save_every == 0:
+
+            self.trajectory.write(self.current_system)  # type: ignore
+
+            np.save(
+                os.path.join(self.out_folder, f"uptake_{self.P:.5f}.npy"),
+                np.array(self.uptake_list),
+            )
+
+            np.save(
+                os.path.join(self.out_folder, f"total_energy_{self.P:.5f}.npy"),
+                np.array(self.total_energy_list),
+            )
+
+            np.save(
+                os.path.join(self.out_folder, f"total_ads_{self.P:.5f}.npy"),
+                np.array(self.total_ads_list),
+            )
+
     def try_insertion(self) -> bool:
         """
         Try to insert a new adsorbate molecule into the framework.
         This method randomly places the adsorbate in the framework and checks for van der Waals overlap.
         If there is no overlap, it calculates the new potential energy and decides whether to accept the insertion
         based on the acceptance criteria.
+        If after a number of tries (self.max_overlap_tries) no valid position is found, the insertion is rejected.
 
         Returns
         -------
@@ -493,26 +550,31 @@ class GCMC(BaseSimulator):
             True if the insertion was accepted, False otherwise.
         """
 
-        atoms_trial = random_mol_insertion(self.current_system, self.adsorbate, self.rnd_generator)
+        for _ in range(self.max_overlap_tries):
+            atoms_trial = random_mol_insertion(
+                self.current_system, self.adsorbate, self.rnd_generator
+            )
 
-        overlaped = check_overlap(
-            atoms=atoms_trial,
-            group1_indices=np.arange(len(self.current_system)),
-            group2_indices=np.arange(len(self.current_system), len(atoms_trial)),
-            vdw_radii=self.vdw,
-        )
+            overlaped = check_overlap(
+                atoms=atoms_trial,
+                group1_indices=np.arange(len(self.current_system)),
+                group2_indices=np.arange(len(self.current_system), len(atoms_trial)),
+                vdw_radii=self.vdw,
+            )
 
-        if overlaped:
+            if not overlaped:
+                break
+        else:
             return False
 
+        # Energy calculation
         atoms_trial.calc = self.model
         e_new = atoms_trial.get_potential_energy()
 
         deltaE = e_new - self.current_total_energy - self.adsorbate_energy
 
         if np.abs(deltaE) > np.abs(self.max_deltaE):
-            if self.save_rejected:
-                self.rejected_trajectory.write(atoms_trial)  # type: ignore
+            self._save_rejected_if_enabled(atoms_trial)
             return False
 
         # Apply the acceptance criteria for insertion
@@ -521,10 +583,9 @@ class GCMC(BaseSimulator):
             self.current_total_energy = e_new
             self.N_ads += 1
             return True
-        else:
-            if self.save_rejected:
-                self.rejected_trajectory.write(atoms_trial)  # type: ignore
-            return False
+
+        self._save_rejected_if_enabled(atoms_trial)
+        return False
 
     def try_deletion(self) -> bool:
         """
@@ -575,35 +636,50 @@ class GCMC(BaseSimulator):
             return False
 
     def try_translation(self) -> bool:
+        """
+        Try to translate an adsorbate molecule within the framework.
+        This method randomly selects an adsorbate molecule and applies a random translation.
+        It checks for van der Waals overlap and calculates the new potential energy.
+
+        Returns
+        -------
+        bool
+            True if the translation was accepted, False otherwise.
+        """
+
         if self.N_ads == 0:
             return False
 
-        i_ads = self.rnd_generator.integers(low=0, high=self.N_ads, size=1)[0]
-        atoms_trial = self.current_system.copy()
+        for _ in range(self.max_overlap_tries):
+            i_ads = self.rnd_generator.integers(low=0, high=self.N_ads, size=1)[0]
+            atoms_trial = self.current_system.copy()
 
-        pos = atoms_trial.get_positions()  # type: ignore
+            pos = atoms_trial.get_positions()  # type: ignore
 
-        i_start = self.n_atoms_framework + self.n_adsorbate_atoms * i_ads
-        i_end = self.n_atoms_framework + self.n_adsorbate_atoms * (i_ads + 1)
+            i_start = self.n_atoms_framework + self.n_adsorbate_atoms * i_ads
+            i_end = self.n_atoms_framework + self.n_adsorbate_atoms * (i_ads + 1)
 
-        pos[i_start:i_end] = random_translation(
-            original_positions=pos[i_start:i_end],
-            max_translation=self.max_translation,
-            rnd_generator=self.rnd_generator,
-        )
+            pos[i_start:i_end] = random_translation(
+                original_position=pos[i_start:i_end],
+                cell=self.current_system.cell.array,
+                max_translation=self.max_translation,
+                rnd_generator=self.rnd_generator,
+            )
 
-        atoms_trial.set_positions(pos)  # type: ignore
+            atoms_trial.set_positions(pos)  # type: ignore
 
-        overlaped = check_overlap(
-            atoms=atoms_trial,
-            group1_indices=np.concatenate(
-                [np.arange(0, i_start), np.arange(i_end, len(atoms_trial))]
-            ),
-            group2_indices=np.arange(i_start, i_end),
-            vdw_radii=self.vdw,
-        )
+            overlaped = check_overlap(
+                atoms=atoms_trial,
+                group1_indices=np.concatenate(
+                    [np.arange(0, i_start), np.arange(i_end, len(atoms_trial))]
+                ),
+                group2_indices=np.arange(i_start, i_end),
+                vdw_radii=self.vdw,
+            )
 
-        if overlaped:
+            if not overlaped:
+                break
+        else:
             return False
 
         atoms_trial.calc = self.model  # type: ignore
@@ -612,8 +688,7 @@ class GCMC(BaseSimulator):
         deltaE = e_trial - self.current_total_energy
 
         if np.abs(deltaE) > np.abs(self.max_deltaE):
-            if self.save_rejected:
-                self.rejected_trajectory.write(atoms_trial)  # type: ignore
+            self._save_rejected_if_enabled(atoms_trial)
             return False
 
         if self._move_acceptance(deltaE=deltaE, movement_name="Translation"):
@@ -621,36 +696,53 @@ class GCMC(BaseSimulator):
             self.current_total_energy = e_trial
             return True
         else:
-            if self.save_rejected:
-                self.rejected_trajectory.write(atoms_trial)  # type: ignore
+            self._save_rejected_if_enabled(atoms_trial)
             return False
 
     def try_rotation(self) -> bool:
+        """
+        Try to rotate an adsorbate molecule within the framework.
+        This method randomly selects an adsorbate molecule and applies a random rotation.
+        It checks for van der Waals overlap and calculates the new potential energy.
+
+        Returns
+        -------
+        bool
+            True if the rotation was accepted, False otherwise.
+        """
+
         if self.N_ads == 0:
             return False
 
-        i_ads = self.rnd_generator.integers(low=0, high=self.N_ads, size=1)[0]
-        atoms_trial = self.current_system.copy()
+        for _ in range(self.max_overlap_tries):
 
-        pos = atoms_trial.get_positions()  # type: ignore
-        i_start = self.n_atoms_framework + self.n_adsorbate_atoms * i_ads
-        i_end = self.n_atoms_framework + self.n_adsorbate_atoms * (i_ads + 1)
+            i_ads = self.rnd_generator.integers(low=0, high=self.N_ads, size=1)[0]
+            atoms_trial = self.current_system.copy()
 
-        pos[i_start:i_end] = random_rotation_limited(
-            pos[i_start:i_end], rnd_generator=self.rnd_generator, theta_max=self.max_rotation
-        )
-        atoms_trial.set_positions(pos)  # type: ignore
+            pos = atoms_trial.get_positions()  # type: ignore
+            i_start = self.n_atoms_framework + self.n_adsorbate_atoms * i_ads
+            i_end = self.n_atoms_framework + self.n_adsorbate_atoms * (i_ads + 1)
 
-        overlaped = check_overlap(
-            atoms=atoms_trial,
-            group1_indices=np.concatenate(
-                [np.arange(0, i_start), np.arange(i_end, len(atoms_trial))]
-            ),
-            group2_indices=np.arange(i_start, i_end),
-            vdw_radii=self.vdw,
-        )
+            pos[i_start:i_end] = random_rotation_limited(
+                original_position=pos[i_start:i_end],
+                cell=self.current_system.cell.array,
+                rnd_generator=self.rnd_generator,
+                theta_max=self.max_rotation,
+            )
+            atoms_trial.set_positions(pos)  # type: ignore
 
-        if overlaped:
+            overlaped = check_overlap(
+                atoms=atoms_trial,
+                group1_indices=np.concatenate(
+                    [np.arange(0, i_start), np.arange(i_end, len(atoms_trial))]
+                ),
+                group2_indices=np.arange(i_start, i_end),
+                vdw_radii=self.vdw,
+            )
+
+            if not overlaped:
+                break
+        else:
             return False
 
         atoms_trial.calc = self.model  # type: ignore
@@ -659,8 +751,7 @@ class GCMC(BaseSimulator):
         deltaE = e_trial - self.current_total_energy
 
         if np.abs(deltaE) > np.abs(self.max_deltaE):
-            if self.save_rejected:
-                self.rejected_trajectory.write(atoms_trial)  # type: ignore
+            self._save_rejected_if_enabled(atoms_trial)
             return False
 
         if self._move_acceptance(deltaE=deltaE, movement_name="Rotation"):
@@ -668,9 +759,91 @@ class GCMC(BaseSimulator):
             self.current_total_energy = e_trial
             return True
         else:
-            if self.save_rejected:
-                self.rejected_trajectory.write(atoms_trial)  # type: ignore
+            self._save_rejected_if_enabled(atoms_trial)
             return False
+
+    def _pick_random_move(self) -> str:
+        """
+        Randomly select a move from the `move_weights` dict.
+        If there is no molecule on the system, always return insertion.
+
+        Returns
+        -------
+        move: str
+        """
+
+        if self.N_ads == 0:
+            move = "insertion"
+
+        else:
+            move = self.rnd_generator.choice(
+                a=list(self.move_weights.keys()), p=list(self.move_weights.values())
+            )
+
+        return move
+
+    def get_average_ads_energy(self) -> float:
+        """
+        Compute the average adsorption energy per adsorbed molecule.
+
+        The adsorption energy is calculated as:
+            E_ads_avg = [E_total - (N_ads * E_adsorbate) - E_framework] / N_ads
+
+        where:
+            - E_total: current total energy of the system (simulation)
+            - N_ads: number of adsorbed molecules
+            - E_adsorbate: energy of an isolated adsorbate molecule
+            - E_framework: energy of the empty framework
+
+        The result is converted from simulation units to kJ/mol per adsorbate.
+
+        Returns
+        -------
+        float
+            The average adsorption energy per molecule in kJ/mol.
+            Returns 0.0 if no molecules are adsorbed (N_ads == 0).
+        """
+
+        if self.N_ads == 0:
+            return 0.0
+
+        # Total adsorption energy (system - framework - isolated adsorbates * n adsorbates)
+        adsorption_energy_total = (
+            self.current_total_energy - self.framework_energy - (self.N_ads * self.adsorbate_energy)
+        )
+
+        # Convert to kJ/mol and normalize per adsorbate
+        E_ads_avg = adsorption_energy_total / (units.kJ / units.mol) / self.N_ads
+
+        return E_ads_avg
+
+    def step(self, iteration: int):
+
+        actual_iteration = iteration + self.base_iteration
+
+        step_time_start = datetime.datetime.now()
+
+        # Randomly select a move based on the move weights
+        move = self._pick_random_move()
+
+        accepted = self.movements[move]()
+        self.mov_dict[move].append(1 if accepted else 0)
+
+        self.uptake_list.append(self.N_ads)
+        self.total_energy_list.append(self.current_total_energy)
+        self.total_ads_list.append(
+            self.current_total_energy - (self.N_ads * self.adsorbate_energy) - self.framework_energy
+        )
+
+        average_ads_energy = self.get_average_ads_energy()
+
+        self.logger.print_step_info(
+            step=actual_iteration,
+            average_ads_energy=average_ads_energy,
+            step_time=(datetime.datetime.now() - step_time_start).total_seconds(),
+        )
+
+        self._save_state(actual_iteration)
 
     def run(self, N) -> None:
         """Run the Grand Canonical Monte Carlo simulation for N iterations."""
@@ -678,72 +851,4 @@ class GCMC(BaseSimulator):
         self.logger.print_run_header()
 
         for iteration in tqdm(range(1, N + 1), disable=(self.out_file is None), desc="GCMC Step"):
-
-            actual_iteration = iteration + self.base_iteration
-
-            step_time_start = datetime.datetime.now()
-
-            move = self.rnd_generator.choice(
-                a=list(self.move_weights.keys()), p=list(self.move_weights.values())
-            )
-
-            # Insertion
-            if move == "insertion" or self.N_ads == 0:
-                accepted = self.try_insertion()
-                self.mov_dict["insertion"].append(1 if accepted else 0)
-
-            # Deletion
-            elif move == "deletion":
-                accepted = self.try_deletion()
-                self.mov_dict["deletion"].append(1 if accepted else 0)
-
-            # Translation
-            elif move == "translation":
-                accepted = self.try_translation()
-                self.mov_dict["translation"].append(1 if accepted else 0)
-
-            # Rotation
-            elif move == "rotation":
-                accepted = self.try_rotation()
-                self.mov_dict["rotation"].append(1 if accepted else 0)
-
-            self.uptake_list.append(self.N_ads)
-            self.total_energy_list.append(self.current_total_energy)
-            self.total_ads_list.append(
-                self.current_total_energy
-                - (self.N_ads * self.adsorbate_energy)
-                - self.framework_energy
-            )
-
-            average_ads_energy = (
-                self.current_total_energy
-                - (self.N_ads * self.adsorbate_energy)
-                - self.framework_energy
-            ) / (units.kJ / units.mol)
-
-            average_ads_energy = average_ads_energy / self.N_ads if self.N_ads > 0 else 0
-
-            self.logger.print_step_info(
-                step=actual_iteration,
-                average_ads_energy=average_ads_energy,
-                step_time=(datetime.datetime.now() - step_time_start).total_seconds(),
-            )
-
-            if actual_iteration % self.save_every == 0:
-
-                self.trajectory.write(self.current_system)  # type: ignore
-
-                np.save(
-                    os.path.join(self.out_folder, f"uptake_{self.P:.5f}.npy"),
-                    np.array(self.uptake_list),
-                )
-
-                np.save(
-                    os.path.join(self.out_folder, f"total_energy_{self.P:.5f}.npy"),
-                    np.array(self.total_energy_list),
-                )
-
-                np.save(
-                    os.path.join(self.out_folder, f"total_ads_{self.P:.5f}.npy"),
-                    np.array(self.total_ads_list),
-                )
+            self.step(iteration)
