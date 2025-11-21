@@ -116,7 +116,7 @@ jobs:
 
       - name: Install requirements
         run: |
-          pip install --upgrade pip setuptools wheel build
+          pip install --upgrade pip setuptools wheel build ruff
           pip install -e .[dev]
 
       - name: Prepare environment
@@ -129,10 +129,6 @@ jobs:
         with:
           name: package
           path: dist
-
-      - name: Generate release notes
-        run: |
-          python scripts/release_notes.py > ${{ github.workspace }}-RELEASE_NOTES.md
 
       - name: Publish package to PyPI
         run: |
