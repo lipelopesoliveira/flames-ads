@@ -9,7 +9,7 @@
 ```
 
 Welcome to FLAMES documentation!
-==================================
+================================
 
 FLAMES is a general purpose adsorption simulation toolbox built around the Atomic Simulation Environment (ASE), which provides tools for molecular simulations and adsorption studies using machine learning potentials, classical force fields, and other advanced techniques.
 
@@ -32,9 +32,19 @@ overview
 ```{toctree}
 :maxdepth: 2
 :hidden:
+:caption: Input Description
+
+input_description/base_simulator
+input_description/gcmc
+input_description/widom
+```
+
+```{toctree}
+:maxdepth: 2
+:hidden:
 :caption: Tutorials: Basic
 
-tutorial_basic
+tutorials/basic_widom
 ```
 
 ```{toctree}

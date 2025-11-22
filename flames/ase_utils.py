@@ -932,7 +932,7 @@ def rdf_gcmc(
                 if isinstance(element_symbol, str):
                     if element_symbol in allElements:
                         # Find all atoms with this symbol
-                        indices = [atom.index for atom in atoms if atom.symbol == element_symbol]
+                        indices = [atom.index for atom in atoms if atom.symbol == element_symbol]  # type: ignore
                         frame_indices.extend(indices)
                 # We already checked for ints, so no need for else
 

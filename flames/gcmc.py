@@ -25,6 +25,126 @@ from flames.utilities import check_weights
 
 
 class GCMC(BaseSimulator):
+    """
+    Base class for Grand Canonical Monte Carlo (GCMC) simulations using ASE.
+
+    This class employs Monte Carlo simulations under the grand canonical ensemble (:math:`\mu VT`) to study the adsorption of molecules in a framework material. It allows for movements such as insertion, deletion, translation, and rotation of adsorbate molecules within the framework.
+
+    Currently, it supports any ASE-compatible calculator for energy calculations.
+
+    :param model:
+        The calculator to use for energy calculations. Can be any ASE-compatible calculator.
+        The output of the calculator should be in eV.
+    :type model: ase.calculators.calculator.Calculator
+
+    :param framework_atoms:
+        The framework structure as an ASE Atoms object.
+    :type framework_atoms: ase.Atoms
+
+    :param adsorbate_atoms:
+        The adsorbate structure as an ASE Atoms object.
+    :type adsorbate_atoms: ase.Atoms
+
+    :param temperature:
+        Temperature of the ideal reservoir in Kelvin.
+    :type temperature: float
+
+    :param pressure:
+        Pressure of the ideal reservoir in Pascal.
+    :type pressure: float
+
+    :param device:
+        Device to run the simulation on, e.g., ``'cpu'`` or ``'cuda'``.
+    :type device: str
+
+    :param vdw_radii:
+        Van der Waals radii for the atoms in the framework and adsorbate.
+        Should be an array of the same length as the number of atomic numbers in ASE.
+    :type vdw_radii: np.ndarray
+
+    :param max_deltaE:
+        Maximum energy difference (in eV) to consider for acceptance criteria.
+        This is used to avoid overflow due to problematic calculations. Default is ``1.555`` eV (approx. 150 kJ/mol).
+    :type max_deltaE: float, optional
+
+    :param vdw_factor:
+        Factor to scale the Van der Waals radii. Default is ``0.6``.
+    :type vdw_factor: float, optional
+
+    :param max_overlap_tries:
+        Maximum number of tries to insert/move a molecule without overlap. Default is ``100``.
+    :type max_overlap_tries: int, optional
+
+    :param max_translation:
+        Maximum translation distance. Default is ``1.0``.
+    :type max_translation: float, optional
+
+    :param max_rotation:
+        Maximum rotation angle (in radians). Default is ``15`` degrees (converted to radians).
+    :type max_rotation: float, optional
+
+    :param save_frequency:
+        Frequency at which to save the simulation state and results. Default is ``100``.
+    :type save_frequency: int, optional
+
+    :param save_rejected:
+        If ``True``, saves the rejected moves in a trajectory file. Default is ``False``.
+    :type save_rejected: bool, optional
+
+    :param output_to_file:
+        If ``True``, writes the output to a file named ``GCMC_Output.out`` in the ``results`` directory. Default is ``True``.
+    :type output_to_file: bool, optional
+
+    :param output_folder:
+        Folder to save the output files. If ``None``, a folder named ``results_<T>_<P>`` will be created.
+    :type output_folder: str or None, optional
+
+    :param debug:
+        If ``True``, prints detailed debug information during the simulation. Default is ``False``.
+    :type debug: bool, optional
+
+    :param fugacity_coeff:
+        Fugacity coefficient to correct the pressure. Default is ``1.0``.
+        Only used if ``criticalTemperature``, ``criticalPressure``, and ``acentricFactor`` are not provided.
+    :type fugacity_coeff: float, optional
+
+    :param random_seed:
+        Random seed for reproducibility. Default is ``None`` and will generate a random seed automatically if not provided.
+    :type random_seed: int or None, optional
+
+    :param cutoff_radius:
+        Interaction potential cut-off radius used to estimate the minimum unit cell. Default is ``6.0``.
+    :type cutoff_radius: float, optional
+
+    :param automatic_supercell:
+        If ``True``, automatically creates a supercell based on the cutoff radius. Default is ``True``.
+    :type automatic_supercell: bool, optional
+
+    :param criticalTemperature:
+        Critical temperature of the adsorbate in Kelvin.
+    :type criticalTemperature: float, optional
+
+    :param criticalPressure:
+        Critical pressure of the adsorbate in Pascal.
+    :type criticalPressure: float, optional
+
+    :param acentricFactor:
+        Acentric factor of the adsorbate.
+    :type acentricFactor: float, optional
+
+    :param LLM:
+        Use Leftmost Local Minima (LLM) on the determination of the equilibration point by `pyMSER <https://github.com/lipelopesoliveira/pyMSER>`_.
+        This can underestimate the equilibration point in some situations, but generate good averages for well-behaved scenarios.
+    :type LLM: bool, optional
+
+    :param move_weights:
+        A dictionary containing the move weights for ``'insertion'``, ``'deletion'``, ``'translation'``, and ``'rotation'``.
+        Default is equal weights for all moves.
+        Example: ``{'insertion': 0.3, 'deletion': 0.3, 'translation': 0.2, 'rotation': 0.2}``
+    :type move_weights: dict, optional
+
+    """
+
     def __init__(
         self,
         model: calculator.Calculator,
@@ -60,75 +180,7 @@ class GCMC(BaseSimulator):
         },
     ):
         """
-        Base class for Grand Canonical Monte Carlo (GCMC) simulations using ASE.
-
-        This clas employs Monte Carlo simulations under the grand canonical ensemble (μVT) ensemble
-        to study the adsorption of molecules in a framework material. It allows for movements such as
-        insertion, deletion, translation, and rotation of adsorbate molecules within the framework.
-
-        Currently, it supports any ASE-compatible calculator for energy calculations.
-
-        Parameters
-        ----------
-        model : ase.calculators.Calculator
-            The calculator to use for energy calculations. Can be any ASE-compatible calculator.
-            The outpyt of the calculator should be in eV.
-        framework_atoms : ase.Atoms
-            The framework structure as an ASE Atoms object.
-        adsorbate_atoms : ase.Atoms
-            The adsorbate structure as an ASE Atoms object.
-        temperature : float
-            Temperature of the ideal reservoir in Kelvin.
-        pressure : float
-            Pressure of the ideal reservoir in Pascal.
-        device : str
-            Device to run the simulation on, e.g., 'cpu' or 'cuda'.
-        vdw_radii : np.ndarray
-            Van der Waals radii for the atoms in the framework and adsorbate.
-            Should be an array of the same length as the number of atomic numbers in ASE.
-        max_deltaE : float, optional
-            Maximum energy difference (in eV) to consider for acceptance criteria.
-            This is used to avoid overflow due to problematic calculations (default is 1.555 eV / 150 kJ/mol).
-        vdw_factor : float, optional
-            Factor to scale the Van der Waals radii (default is 0.6).
-        max_overlap_tries : int, optional
-            Maximum number of tries to insert/move a molecule without overlap (default is 100).
-        max_translation : float, optional
-            Maximum translation distance (default is 1.0).
-        max_rotation : float, optional
-            Maximum rotation angle (in radians) (default is 15 degrees).
-        save_frequency : int, optional
-            Frequency at which to save the simulation state and results (default is 100).
-        save_rejected : bool, optional
-            If True, saves the rejected moves in a trajectory file (default is False).
-        output_to_file : bool, optional
-            If True, writes the output to a file named 'GCMC_Output.out' in the 'results' directory
-            (default is True).
-        output_folder : str | None, optional
-            Folder to save the output files. If None, a folder named 'results_<T>_<P>' will be created.
-        debug : bool, optional
-            If True, prints detailed debug information during the simulation (default is False).
-        fugacity_coeff : float, optional
-            Fugacity coefficient to correct the pressure. Default is 1.0.
-            Only used if `criticalTemperature`, `criticalPressure`, and `acentricFactor` are not provided.
-        random_seed : int | None
-            Random seed for reproducibility (default is None).
-        cutoff_radius : float
-            Interaction potential cut-off radius used to estimate the minimum unit cell (default is 6.0).
-        automatic_supercell : bool
-            If True, automatically creates a supercell based on the cutoff radius (default is True).
-        criticalTemperature : float, optional
-            Critical temperature of the adsorbate in Kelvin.
-        criticalPressure : float, optional
-            Critical pressure of the adsorbate in Pascal.
-        acentricFactor : float, optional
-            Acentric factor of the adsorbate.
-        LLM : bool, optional
-            Use Leftmost Local Minima on the determination of the equilibration point. This can underestimate the
-            equilibration point in some situations, but generate good averages for well-behaved scenarios.
-        move_weights : dict, optional
-            A dictionary containing the move weights for 'insertion', 'deletion', 'translation', and 'rotation'.
-            Default is equal weights for all moves.
+        Initialize the Grand Canonical Monte Carlo (GCMC) simulation.
         """
 
         super().__init__(

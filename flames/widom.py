@@ -18,6 +18,83 @@ from flames.utilities import random_n_splits
 
 
 class Widom(BaseSimulator):
+    """
+    Base class for Widom insertion method using ASE.
+
+    This class performs the Widom insertion method to calculate the enthalpy of adsorption and Henry coefficient of an adsorbate in a framework.
+
+    Currently, it supports only one adsorbate molecule and any ASE-compatible calculator for energy calculations.
+
+    :param framework_atoms:
+        The empty framework structure where the adsorbate will be inserted.
+    :type framework_atoms: ase.Atoms
+
+    :param adsorbate_atoms:
+        The adsorbate molecule to be inserted into the framework.
+    :type adsorbate_atoms: ase.Atoms
+
+    :param temperature:
+        Temperature of the ideal reservoir in Kelvin.
+    :type temperature: float
+
+    :param model:
+        ASE-compatible calculator for energy calculations.
+    :type model: ase.calculators.calculator.Calculator
+
+    :param vdw_radii:
+        Van der Waals radii of the atoms in the framework and adsorbate.
+    :type vdw_radii: np.ndarray
+
+    :param vdw_factor:
+        Factor to scale the Van der Waals radii. Default is ``0.6``.
+    :type vdw_factor: float, optional
+
+    :param max_overlap_tries:
+        Maximum number of tries to insert/move a molecule without overlap. Default is ``100``.
+    :type max_overlap_tries: int, optional
+
+    :param max_deltaE:
+        Maximum energy difference (in eV) to consider for acceptance criteria.
+        This is used to avoid overflow due to problematic calculations. Default is ``1.555`` eV (approx. 150 kJ/mol).
+    :type max_deltaE: float, optional
+
+    :param device:
+        Device to run the calculations on, either ``'cpu'`` or ``'cuda'``. Default is ``'cpu'``.
+    :type device: str, optional
+
+    :param save_frequency:
+        Frequency at which to save the simulation state and results. Default is ``100``.
+    :type save_frequency: int, optional
+
+    :param save_rejected:
+        If ``True``, saves the rejected moves in a trajectory file. Default is ``False``.
+    :type save_rejected: bool, optional
+
+    :param output_to_file:
+        If ``True``, writes the output to a file named ``Widom_Output.out`` in the ``results`` directory. Default is ``True``.
+    :type output_to_file: bool, optional
+
+    :param output_folder:
+        Folder to save the output files. If ``None``, a folder named ``results_<T>_<P>`` will be created.
+    :type output_folder: str or None, optional
+
+    :param debug:
+        If ``True``, enables debug mode with more verbose output. Default is ``False``.
+    :type debug: bool, optional
+
+    :param random_seed:
+        Random seed for reproducibility. Default is ``None``.
+    :type random_seed: int or None, optional
+
+    :param cutoff_radius:
+        Interaction potential cut-off radius used to estimate the minimum unit cell. Default is ``6.0``.
+    :type cutoff_radius: float, optional
+
+    :param automatic_supercell:
+        Whether to automatically create a supercell based on the cutoff radius. Default is ``True``.
+    :type automatic_supercell: bool, optional
+    """
+
     def __init__(
         self,
         framework_atoms: ase.Atoms,
@@ -39,52 +116,7 @@ class Widom(BaseSimulator):
         automatic_supercell: bool = True,
     ) -> None:
         """
-        Base class for Widom insertion method using ASE.
-
-        This class performs the Widom insertion method to calculate the enthalpy of adsorption
-        and Henry coefficient of an adsorbate in a framework.
-
-        Currently, it supports only one adsorbate molecule and any ASE-compatible calculator
-        for energy calculations.
-
-        Parameters
-        ----------
-        framework_atoms : ase.Atoms
-            The empty framework structure where the adsorbate will be inserted.
-        adsorbate_atoms : ase.Atoms
-            The adsorbate molecule to be inserted into the framework.
-        temperature : float
-            Temperature of the ideal reservoir in Kelvin.
-        model : ase.calculators.calculator.Calculator
-            ASE-compatible calculator for energy calculations.
-        vdw_radii : np.ndarray
-            Van der Waals radii of the atoms in the framework and adsorbate.
-        vdw_factor : float, optional
-            Factor to scale the Van der Waals radii (default is 0.6).
-        max_overlap_tries : int, optional
-            Maximum number of tries to insert/move a molecule without overlap (default is 100).
-        max_deltaE : float, optional
-            Maximum energy difference (in eV) to consider for acceptance criteria.
-            This is used to avoid overflow due to problematic calculations (default is 1.555 eV / 150 kJ/mol).
-        device : str, optional
-            Device to run the calculations on, either 'cpu' or 'cuda'. Default is 'cpu'.
-        save_frequency : int, optional
-            Frequency at which to save the simulation state and results (default is 100).
-        save_rejected : bool, optional
-            If True, saves the rejected moves in a trajectory file (default is False).
-        output_to_file : bool, optional
-            If True, writes the output to a file named 'Widom_Output.out' in the 'results' directory
-            (default is True).
-        output_folder: Union[str, None], optional
-            Folder to save the output files. If None, a folder named 'results_<T>_<P>' will be created.
-        debug : bool, optional
-            If True, enables debug mode with more verbose output (default is False).
-        random_seed : int | None
-            Random seed for reproducibility (default is None).
-        cutoff_radius : float
-            Interaction potential cut-off radius used to estimate the minimum unit cell (default is 6.0).
-        automatic_supercell : bool
-            Whether to automatically create a supercell based on the cutoff radius (default is True).
+        Initialize the Widom insertion simulation.
         """
 
         super().__init__(

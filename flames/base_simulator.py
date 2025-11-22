@@ -26,6 +26,83 @@ class BaseSimulator:
     """
     This class handles all base parameters for the simulations.
     Separates the basic logic used in the simulations from the specific implementation details.
+
+    :param model:
+        The calculator to use for energy calculations. Can be any ASE-compatible calculator.
+        The output of the calculator should be in eV.
+    :type model: ase.calculators.calculator.Calculator
+
+    :param framework_atoms:
+        The framework structure as an ASE Atoms object.
+    :type framework_atoms: ase.Atoms
+
+    :param adsorbate_atoms:
+        The adsorbate structure as an ASE Atoms object.
+    :type adsorbate_atoms: ase.Atoms
+
+    :param temperature:
+        Temperature of the ideal reservoir in Kelvin.
+    :type temperature: float
+
+    :param pressure:
+        Pressure of the ideal reservoir in Pascal.
+    :type pressure: float
+
+    :param device:
+        Device to run the simulation on, e.g., ``'cpu'`` or ``'cuda'``.
+    :type device: str
+
+    :param vdw_radii:
+        Van der Waals radii for the atoms in the framework and adsorbate.
+        Should be an array of the same length as the number of atomic numbers in ASE.
+    :type vdw_radii: np.ndarray
+
+    :param vdw_factor:
+        Factor to scale the Van der Waals radii. Default is ``0.6``.
+    :type vdw_factor: float, optional
+
+    :param max_deltaE:
+        Maximum energy difference (in eV) to consider for acceptance criteria.
+        This is used to avoid overflow due to problematic calculations. Default is ``1.555`` eV (approx. 150 kJ/mol).
+    :type max_deltaE: float, optional
+
+    :param save_frequency:
+        Frequency at which to save the simulation state and results. Default is ``100``.
+    :type save_frequency: int, optional
+
+    :param save_rejected:
+        If ``True``, saves the rejected moves in a trajectory file. Default is ``False``.
+    :type save_rejected: bool, optional
+
+    :param output_to_file:
+        If ``True``, writes the output to a file named ``GCMC_Output.out`` in the results directory.
+    :type output_to_file: bool, optional
+
+    :param output_folder:
+        Folder to save the output files. If ``None``, a folder named ``results_<T>_<P>`` will be created
+        based on the temperature and pressure. Default is ``None``.
+    :type output_folder: str or None, optional
+
+    :param debug:
+        If ``True``, prints detailed debug information during the simulation. Default is ``False``.
+    :type debug: bool, optional
+
+    :param fugacity_coeff:
+        Fugacity coefficient to correct the pressure. Default is ``1.0``.
+        Only used if ``criticalTemperature``, ``criticalPressure``, and ``acentricFactor`` are not provided.
+    :type fugacity_coeff: float, optional
+
+    :param random_seed:
+        Random seed for reproducibility. Default is ``None``.
+    :type random_seed: int or None, optional
+
+    :param cutoff_radius:
+        Interaction potential cut-off radius used to estimate the minimum unit cell. Default is ``6.0``.
+    :type cutoff_radius: float, optional
+
+    :param automatic_supercell:
+        If ``True``, automatically creates a supercell based on the cutoff radius. Default is ``True``.
+    :type automatic_supercell: bool, optional
     """
 
     def __init__(
@@ -49,49 +126,6 @@ class BaseSimulator:
         cutoff_radius: float = 6.0,
         automatic_supercell: bool = True,
     ):
-        """
-        model : ase.calculators.Calculator
-            The calculator to use for energy calculations. Can be any ASE-compatible calculator.
-            The outpyt of the calculator should be in eV.
-        framework_atoms : ase.Atoms
-            The framework structure as an ASE Atoms object.
-        adsorbate_atoms : ase.Atoms
-            The adsorbate structure as an ASE Atoms object.
-        temperature : float
-            Temperature of the ideal reservoir in Kelvin.
-        pressure : float
-            Pressure of the ideal reservoir in Pascal.
-        device : str
-            Device to run the simulation on, e.g., 'cpu' or 'cuda'.
-        vdw_radii : np.ndarray
-            Van der Waals radii for the atoms in the framework and adsorbate.
-            Should be an array of the same length as the number of atomic numbers in ASE.
-        vdw_factor : float, optional
-            Factor to scale the Van der Waals radii (default is 0.6).
-         max_deltaE : float, optional
-            Maximum energy difference (in eV) to consider for acceptance criteria.
-            This is used to avoid overflow due to problematic calculations (default is 1.555 eV / 150 kJ/mol).
-        save_frequency : int, optional
-            Frequency at which to save the simulation state and results (default is 100).
-        save_rejected : bool, optional
-            If True, saves the rejected moves in a trajectory file (default is False).
-        output_to_file : bool, optional
-            If True, writes the output to a file named 'GCMC_Output.out' in the 'results' directory
-        output_folder : str | None, optional
-            Folder to save the output files. If None, a folder named 'results_<T>_<P>' will be created
-            based on the temperature and pressure (default is None).
-        debug : bool, optional
-            If True, prints detailed debug information during the simulation (default is False).
-        fugacity_coeff : float, optional
-            Fugacity coefficient to correct the pressure. Default is 1.0.
-            Only used if `criticalTemperature`, `criticalPressure`, and `acentricFactor` are not provided.
-        random_seed : int | None
-            Random seed for reproducibility (default is None).
-        cutoff_radius : float
-            Interaction potential cut-off radius used to estimate the minimum unit cell (default is 6.0).
-        automatic_supercell : bool
-            If True, automatically creates a supercell based on the cutoff radius (default is True).
-        """
 
         self.random_seed = random_seed if random_seed is not None else np.random.randint(1, 1000000)
         self.rnd_generator = np.random.default_rng(self.random_seed)
