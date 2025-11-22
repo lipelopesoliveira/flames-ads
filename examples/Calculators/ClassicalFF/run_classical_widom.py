@@ -16,10 +16,10 @@ set_num_threads(NUM_THREADS_TO_USE)
 print(get_num_threads())
 
 
-with open("/home/felipe/PRs/mlp_adsorption/flames/data/UFF_lj_params.json", "r") as f:
+with open("/home/felipe/PRs/flames/flames/data/UFF_lj_params.json", "r") as f:
     uff_lj_params = json.loads(f.read())
 
-with open("/home/felipe/PRs/mlp_adsorption/flames/data/TraPPE_lj_params.json", "r") as f:
+with open("/home/felipe/PRs/flames/flames/data/TraPPE_lj_params.json", "r") as f:
     trappe_lj_params = json.loads(f.read())
 
 FrameworkPath = "MgMOF-74_DDEC.cif"

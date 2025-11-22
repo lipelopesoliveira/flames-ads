@@ -30,7 +30,11 @@ runs:
       id: virtualenv-cache
       with:
         path: .venv
-        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('pyproject.toml') }}
+        # Use a glob for pyproject in case repository layout or name changes
+        key: ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('**/pyproject.toml') }}
+        # Provide restore-keys so a partial/previous cache can be restored when exact key misses
+        restore-keys: |
+          ${{ inputs.cache-prefix }}-${{ runner.os }}-${{ env.PYTHON_VERSION }}-
 
     - if: steps.virtualenv-cache.outputs.cache-hit != 'true'
       shell: bash
