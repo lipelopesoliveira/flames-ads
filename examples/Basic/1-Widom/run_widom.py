@@ -1,7 +1,4 @@
 import os
-import sys
-
-sys.path.append('/home/felipe/PRs/flames')
 
 # Hide UserWarning and RuntimeWarning messages
 import warnings
