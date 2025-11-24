@@ -30,7 +30,8 @@ dependencies = [
   "gemmi",
   "simplejson",
   "mace-torch",
-  "torch-dftd"
+  "torch-dftd",
+  "pymser"
 ]
 license = {file = "LICENSE"}
 
